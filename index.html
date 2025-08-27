@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en" >
+<head>
+  <meta charset="UTF-8">
+  <title>Admin</title>
+  
+
+</head>
+<body>
+<!-- partial:index.partial.html -->
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin — মাল্টি-শপ</title>
+  <style>
+    :root{--bg:#07122a;--card:#0b1226;--text:#e6eef8;--muted:#9fb0c8;--accent:#16a34a}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,Arial;background:linear-gradient(180deg,#041029,#07122a);color:var(--text)}
+    header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:rgba(2,6,23,.6);border-bottom:1px solid rgba(255,255,255,.04)}
+    .container{max-width:1100px;margin:20px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .panel{background:linear-gradient(180deg,#07102a,#0b1226);padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,.03)}
+    input,textarea,select{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.04);background:transparent;color:var(--text)}
+    button{padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.04);background:transparent;color:var(--text);cursor:pointer}
+    button.primary{background:var(--accent);color:#03260f;border-color:#0f6b36}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:8px;border-bottom:1px dashed rgba(255,255,255,.04);text-align:left}
+    .muted{color:var(--muted)}
+    .actions{display:flex;gap:8px}
+    .pill{background:#03122a;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.03)}
+    .small{font-size:.9rem}
+  </style>
+</head>
+<body>
+  <header>
+    <div style="font-weight:700">🛠️ Admin — মাল্টি-শপ</div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <a href="index.html" class="pill">Store ↩︎</a>
+      <button id="exportAll">Export All (JSON)</button>
+      <button id="clearAll" style="background:#7f1d1d;color:#fff">Clear All Data</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="grid">
+      <div class="panel">
+        <h3 id="formTitle">Add Product</h3>
+        <form id="productForm">
+          <label class="small">Product Name</label>
+          <input type="text" id="pName" required />
+          <label class="small">Price (৳)</label>
+          <input type="number" id="pPrice" min="0" required />
+          <label class="small">Image URL</label>
+          <input type="text" id="pImage" placeholder="https://..." required />
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="primary" type="submit" id="saveBtn">Save</button>
+            <button type="button" id="resetBtn">Reset</button>
+            <button type="button" id="fillDemo">Fill Demo</button>
+          </div>
+        </form>
+
+        <div style="margin-top:14px">
+          <h4>Products</h4>
+          <div id="productCount" class="muted small"></div>
+          <table id="productTable">
+            <thead><tr><th>Preview</th><th>Name</th><th>Price</th><th>Action</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Orders</h3>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="search" placeholder="Search by name/mobile/order id" />
+          <button id="refreshOrders">Refresh</button>
+          <button id="exportOrders">Export Orders</button>
+        </div>
+        <div id="ordersSummary" class="muted small"></div>
+        <table id="ordersTable">
+          <thead><tr><th>ID</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer style="margin-top:20px" class="muted">LocalStorage based admin — products stored under <b>ms_products_v1</b> and orders under <b>ms_orders_v1</b></footer>
+  </div>
+
+<script>
+  // ---------- Keys ----------
+  const STORAGE_PRODUCTS = 'ms_products_v1';
+  const STORAGE_ORDERS = 'ms_orders_v1';
+
+  // ---------- Helpers ----------
+  function save(key, v){ localStorage.setItem(key, JSON.stringify(v)); }
+  function load(key, fallback){ try{ const t=localStorage.getItem(key); return t?JSON.parse(t):fallback }catch(e){ return fallback } }
+  function fmt(n){ return Number(n||0).toLocaleString('en-IN') }
+  function uid(prefix='id'){ return prefix + '_' + Date.now().toString().slice(-6) + Math.floor(Math.random()*90) }
+
+  // ---------- Elements ----------
+  const productForm = document.getElementById('productForm');
+  const pName = document.getElementById('pName');
+  const pPrice = document.getElementById('pPrice');
+  const pImage = document.getElementById('pImage');
+  const productTableBody = document.querySelector('#productTable tbody');
+  const productCount = document.getElementById('productCount');
+  const ordersTableBody = document.querySelector('#ordersTable tbody');
+  const ordersSummary = document.getElementById('ordersSummary');
+  const searchInput = document.getElementById('search');
+  const formTitle = document.getElementById('formTitle');
+  const saveBtn = document.getElementById('saveBtn');
+
+  let products = load(STORAGE_PRODUCTS, []);
+  let orders = load(STORAGE_ORDERS, []);
+
+  let editingId = null; // when editing product
+
+  // ---------- Product CRUD ----------
+  function renderProducts(){
+    products = load(STORAGE_PRODUCTS, []);
+    productTableBody.innerHTML = products.map(p=>`
+      <tr>
+        <td style="width:80px"><img src="${p.image}" style="width:70px;height:50px;object-fit:cover;border-radius:6px" /></td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>৳ ${fmt(p.price)}</td>
+        <td class="actions">
+          <button onclick="editProduct('${p.id}')">Edit</button>
+          <button onclick="deleteProduct('${p.id}')">Delete</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="4" class="muted">No products</td></tr>';
+    productCount.textContent = `${products.length} products`;
+  }
+
+  productForm.addEventListener('submit', function(e){
+    e.preventDefault();
+    const name = pName.value.trim();
+    const price = Number(pPrice.value);
+    const image = pImage.value.trim() || placeholderImage();
+
+    if(!name || isNaN(price)){ alert('Name and valid price required'); return; }
+
+    if(editingId){
+      // update
+      products = products.map(p => p.id === editingId ? ({...p, name, price, image}) : p);
+      editingId = null;
+      formTitle.textContent = 'Add Product';
+      save(STORAGE_PRODUCTS, products);
+      renderProducts();
+      this.reset();
+      alert('প্রোডাক্ট আপডেট হয়েছে');
+      return;
+    }
+    const newP = { id: uid('p'), name, price, image };
+    products.unshift(newP);
+    save(STORAGE_PRODUCTS, products);
+    renderProducts();
+    this.reset();
+    alert('প্রোডাক্ট যোগ হয়েছে');
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    productForm.reset();
+    editingId = null;
+    formTitle.textContent = 'Add Product';
+  });
+
+  function editProduct(id){
+    const p = products.find(x=>x.id === id);
+    if(!p) return alert('Product not found');
+    pName.value = p.name;
+    pPrice.value = p.price;
+    pImage.value = p.image;
+    editingId = id;
+    formTitle.textContent = 'Edit Product';
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  function deleteProduct(id){
+    if(!confirm('প্রোডাক্টটি মুছবেন?')) return;
+    products = products.filter(p=>p.id !== id);
+    save(STORAGE_PRODUCTS, products);
+    renderProducts();
+    alert('প্রোডাক্ট মুছে ফেলা হয়েছে');
+  }
+
+  // ---------- Orders ----------
+  function renderOrders(){
+    orders = load(STORAGE_ORDERS, []);
+    const q = (searchInput.value || '').trim().toLowerCase();
+    let list = orders.slice();
+    if(q){
+      list = list.filter(o => o.id.toLowerCase().includes(q) || (o.customer && (o.customer.name||'').toLowerCase().includes(q) || (o.customer.mobile||'').toLowerCase().includes(q)));
+    }
+    list.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+    ordersTableBody.innerHTML = list.map(o=>`
+      <tr>
+        <td style="white-space:nowrap">${o.id}<div class="muted small">${new Date(o.createdAt).toLocaleString()}</div></td>
+        <td>${escapeHtml(o.customer.name)}<div class="muted small">${o.customer.mobile}</div><div class="muted small">${escapeHtml(o.customer.address)}</div></td>
+        <td>${o.items.map(it=>escapeHtml(it.name)+' × '+it.qty).join('<br>')}</td>
+        <td>৳ ${fmt(o.total)}<div class="muted small">(${fmt(o.subtotal)} + ${fmt(o.delivery)})</div></td>
+        <td><span class="pill">${escapeHtml(o.status)}</span></td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button onclick="markDone('${o.id}')">Mark Done</button>
+            <button onclick="copyOrder('${o.id}')">Copy</button>
+            <button onclick="deleteOrder('${o.id}')">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="6" class="muted">No orders</td></tr>';
+
+    const totalOrders = orders.length;
+    const newCount = orders.filter(x=>x.status==='new').length;
+    const doneCount = orders.filter(x=>x.status==='done').length;
+    const sales = orders.filter(x=>x.status!=='canceled').reduce((s,o)=>s + (o.total||0), 0);
+    ordersSummary.innerHTML = `${totalOrders} orders — New: ${newCount} — Done: ${doneCount} — Total Sales: ৳ ${fmt(sales)}`;
+  }
+
+  function markDone(id){
+    if(!confirm('এই অর্ডার ডেলিভারি সম্পন্ন হিসেবে মার্ক করবেন?')) return;
+    orders = orders.map(o => o.id===id ? ({...o, status:'done'}) : o);
+    save(STORAGE_ORDERS, orders);
+    renderOrders();
+  }
+  function deleteOrder(id){
+    if(!confirm('এই অর্ডার মুছে ফেলবেন?')) return;
+    orders = orders.filter(o=>o.id !== id);
+    save(STORAGE_ORDERS, orders);
+    renderOrders();
+  }
+  function copyOrder(id){
+    const o = orders.find(x=>x.id===id);
+    if(!o) return;
+    const text = [
+      `Order ID: ${o.id}`,
+      `Date: ${new Date(o.createdAt).toLocaleString()}`,
+      `Name: ${o.customer.name}`,
+      `Mobile: ${o.customer.mobile}`,
+      `Address: ${o.customer.address}`,
+      `Items: ${o.items.map(i=>i.name+' x '+i.qty).join(', ')}`,
+      `Subtotal: ৳${fmt(o.subtotal)}`,
+      `Delivery: ৳${fmt(o.delivery)}`,
+      `Total: ৳${fmt(o.total)}`,
+      `Status: ${o.status}`
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(()=> alert('Copied to clipboard'));
+  }
+
+  // ---------- Exports & clear ----------
+  document.getElementById('exportAll').addEventListener('click', ()=>{
+    const data = { products: load(STORAGE_PRODUCTS,[]), orders: load(STORAGE_ORDERS,[]) };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'multishop_export.json'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('exportOrders').addEventListener('click', ()=>{
+    const data = load(STORAGE_ORDERS, []);
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'orders.json'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('clearAll').addEventListener('click', ()=>{
+    if(!confirm('সব ডেটা মুছবেন? (প্রোডাক্ট ও অর্ডার উভয়ই মুছে যাবে)')) return;
+    localStorage.removeItem(STORAGE_PRODUCTS);
+    localStorage.removeItem(STORAGE_ORDERS);
+    products = []; orders = [];
+    renderProducts(); renderOrders();
+    alert('All data cleared');
+  });
+
+  document.getElementById('refreshOrders').addEventListener('click', renderOrders);
+  searchInput.addEventListener('input', renderOrders);
+
+  // ---------- Utilities ----------
+  function placeholderImage(){ return 'https://picsum.photos/seed/' + Math.floor(Math.random()*9999) + '/400/300' }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  document.getElementById('fillDemo').addEventListener('click', ()=>{
+    pName.value = 'Demo Product'; pPrice.value = 799; pImage.value = placeholderImage();
+  });
+
+  // ---------- Init ----------
+  function init(){
+    renderProducts();
+    renderOrders();
+    // if query param edit=x then open edit
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get('edit');
+    if(editId){
+      const p = products.find(x=>x.id===editId);
+      if(p){ pName.value = p.name; pPrice.value = p.price; pImage.value = p.image; editingId = p.id; formTitle.textContent = 'Edit Product'; window.scrollTo({top:0,behavior:'smooth'}); }
+    }
+  }
+
+  // expose functions for inline use
+  window.editProduct = function(id){ editProduct(id); };
+  window.deleteProduct = function(id){ deleteProduct(id); };
+  window.markDone = function(id){ markDone(id); };
+  window.copyOrder = function(id){ copyOrder(id); };
+  window.deleteOrder = function(id){ deleteOrder(id); };
+
+  init();
+</script>
+</body>
+</html>
+<!-- partial -->
+  
+</body>
+</html>
